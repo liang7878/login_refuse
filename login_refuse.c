@@ -30,8 +30,7 @@
 PG_MODULE_MAGIC;
 
 PG_FUNCTION_INFO_V1(login_refuse_set_expire_time);
-PG_FUNCTION_INFO_V1(login_refuse_get_expire_time);
-PG_FUNCTION_INFO_V1(login_refuse_get_expire_time_by_username);
+PG_FUNCTION_INFO_V1(login_refuse_reset_expire_time);
 
 void		_PG_init(void);
 void		_PG_fini(void);
@@ -64,7 +63,7 @@ static ClientAuthentication_hook_type original_client_auth_hook = NULL;
 static void
 login_refuse_checks(Port *port, int status)
 {
-	elog(LOG,"-----------------------begin-------------------------");
+	elog(DEBUG1,"-----------------------begin-------------------------");
 	/*
 	 * Any other plugins which use ClientAuthentication_hook.
 	 */
@@ -84,19 +83,19 @@ login_refuse_checks(Port *port, int status)
 	switch(status)
 	{
 		case STATUS_OK:
-			elog(LOG,"status is STATUS_OK");
+			elog(DEBUG1,"status is STATUS_OK");
 			break;
 		case STATUS_ERROR:
-			elog(LOG,"status is STATUS_ERROR");
+			elog(DEBUG1,"status is STATUS_ERROR");
 			break;
 		case STATUS_EOF:
-			elog(LOG,"status is STATUS_EOF");
+			elog(DEBUG1,"status is STATUS_EOF");
 			break;
 		case STATUS_FOUND:
-			elog(LOG,"status is STATUS_FOUND");
+			elog(DEBUG1,"status is STATUS_FOUND");
 			break;
 		case STATUS_WAITING:
-			elog(LOG,"status is STATUS_WAITING");
+			elog(DEBUG1,"status is STATUS_WAITING");
 			break;
 		default:
 			break;
@@ -108,7 +107,7 @@ login_refuse_checks(Port *port, int status)
 	}
 
 	if(user_expire_exist(port->user_name)) {
-		elog(LOG, "enter user exist!");
+		elog(DEBUG1, "enter user exist!");
 		if(isExpired(port->user_name)) {
 			free(expire_path);
 			ereport(FATAL,
@@ -118,7 +117,7 @@ login_refuse_checks(Port *port, int status)
 		}
 	}
 
-	elog(LOG,"login_refuse_minutes is %d", login_refuse_minutes);
+	elog(DEBUG1,"login_refuse_minutes is %d", login_refuse_minutes);
 
 	if (user_exist(port->user_name))
 	{
@@ -126,7 +125,7 @@ login_refuse_checks(Port *port, int status)
 		{
 			if (failed_time_interval(port->user_name) < login_refuse_minutes * 60)
 			{
-				elog(LOG,"this connection should be refused!");
+				elog(DEBUG1,"this connection should be refused!");
 				free(full_path);
 				ereport(FATAL,
 					(errcode(ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION),
@@ -135,7 +134,7 @@ login_refuse_checks(Port *port, int status)
 			}
 			else
 			{
-				elog(LOG,"222");
+				elog(DEBUG1,"222");
 				remove_user(port->user_name);
 			}
 		}
@@ -143,10 +142,10 @@ login_refuse_checks(Port *port, int status)
 		{
 			if (failed_time_interval(port->user_name) > login_refuse_minutes * 60)
 			{
-				elog(LOG,"233");
+				elog(DEBUG1,"233");
 				remove_user(port->user_name);
 			}
-			elog(LOG,"234");
+			elog(DEBUG1,"234");
 		}
 	}
 
@@ -155,23 +154,23 @@ login_refuse_checks(Port *port, int status)
 
 		if (!user_exist(port->user_name))
 		{
-			elog(LOG,"333");
+			elog(DEBUG1,"333");
 			insert_user(port->user_name, 1, time(NULL));
 
 		}
 		else
 		{
-			elog(LOG,"444");
+			elog(DEBUG1,"444");
 			increase_failed_count(port->user_name); // update failed time also
 		}
 	}
 	else
 	{
-		elog(LOG,"445");
+		elog(DEBUG1,"445");
 		remove_user(port->user_name);
 	}
 	free(full_path);
-	elog(LOG,"------------------------end--------------------------");
+	elog(DEBUG1,"------------------------end--------------------------");
 }
 
 Datum
@@ -184,14 +183,14 @@ login_refuse_set_expire_time(PG_FUNCTION_ARGS)
 	char	*username = text_to_cstring(PG_GETARG_TEXT_P(0));
 	long	timestamp = PG_GETARG_INT64(1);
 
-	elog(LOG, "username: %s, expire time: %ld", username, timestamp);
+	elog(DEBUG1, "username: %s, expire time: %ld", username, timestamp);
 	create_expire_file();
 
 	if(user_expire_exist(username)) {
-		elog(LOG, "enter exist");
+		elog(DEBUG1, "enter exist");
 		user_expire_update(username, timestamp);
 	} else {
-		elog(LOG, "enter no exist");
+		elog(DEBUG1, "enter no exist");
 		user_expire_insert(username, timestamp);
 	}
 
@@ -200,14 +199,24 @@ login_refuse_set_expire_time(PG_FUNCTION_ARGS)
 }
 
 Datum
-login_refuse_get_expire_time(PG_FUNCTION_ARGS) {
+login_refuse_reset_expire_time(PG_FUNCTION_ARGS)
+{
+	if (!superuser())
+		ereport(ERROR,
+				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+				 (errmsg("must be superuser to use login_expire"))));
+	char	*username = text_to_cstring(PG_GETARG_TEXT_P(0));\
+	create_expire_file();
 
+	if(user_expire_exist(username)) {
+		elog(DEBUG1, "enter exist");
+		user_expire_remove(username);
+	}
+
+
+	PG_RETURN_VOID();
 }
 
-Datum
-login_refuse_get_expire_time_by_username(PG_FUNCTION_ARGS) {
-	
-}
 
 void create_expire_file(void) {
 	char *configdir;
@@ -221,7 +230,7 @@ void create_expire_file(void) {
 	if((fp = fopen(expire_path, "r")) == NULL) {
 		fp = fopen(expire_path, "w");
 		fclose(fp);
-		elog(LOG, "expire file created!");
+		elog(DEBUG1, "expire file created!");
 	} else {
 		fclose(fp);
 	}
@@ -236,7 +245,7 @@ bool isExpired(char *username) {
 	time_t expire_time;
 	double diff_t;
 
-	elog(LOG, "enter isExpired");
+	elog(DEBUG1, "enter isExpired");
 
 	fp = fopen(expire_path, "r");
 	if(fp == NULL) {
@@ -246,33 +255,33 @@ bool isExpired(char *username) {
 	strcpy(id, " ");
 	strcat(id, username);
 	strcat(id, " ");
-	elog(LOG, "enter isExpired1");
+	elog(DEBUG1, "enter isExpired1");
 
 	while(!feof(fp)) {
-		elog(LOG, "enter isExpired2");
+		elog(DEBUG1, "enter isExpired2");
 		fgets(line, 200, fp);
-		elog(LOG, "enter isExpired2");
+		elog(DEBUG1, "enter isExpired2");
 		if (strstr(line, id)) {
-			elog(LOG, "enter isExpired4");
+			elog(DEBUG1, "enter isExpired4");
 			ptr = strtok(line, " ");
-			elog(LOG, "enter isExpired5: %s", ptr);
+			elog(DEBUG1, "enter isExpired5: %s", ptr);
 			ptr = strtok(NULL, " ");
-			elog(LOG, "ptr is $$%s$$", ptr);
+			elog(DEBUG1, "ptr is $$%s$$", ptr);
 			sscanf(ptr, "%ld", &expire_time);
-			elog(LOG, "enter isExpired6: $$%ld$$ vs $$%ld$$", expire_time, time(NULL));
-			elog(LOG, "strcat");
+			elog(DEBUG1, "enter isExpired6: $$%ld$$ vs $$%ld$$", expire_time, time(NULL));
+			elog(DEBUG1, "strcat");
 
-			elog(LOG, "before compre: %f", difftime(expire_time, time(NULL)));
-			elog(LOG, "before compre: %f", difftime(time(NULL), expire_time));
+			elog(DEBUG1, "before compre: %f", difftime(expire_time, time(NULL)));
+			elog(DEBUG1, "before compre: %f", difftime(time(NULL), expire_time));
 			// if(expire_time<current) {
-			// 	elog(LOG, "enter isExpired7, ==========expired=================");
+			// 	elog(DEBUG1, "enter isExpired7, ==========expired=================");
 			// 	return true;
 			// }
 			if(difftime(expire_time, time(NULL)) < 0) {
-				elog(LOG, "enter isExpired7, ==========expired=================");
+				elog(DEBUG1, "enter isExpired7, ==========expired=================");
 				return true;
 			}
-			elog(LOG, "after compare");
+			elog(DEBUG1, "after compare");
 		}
 	}
 
@@ -286,7 +295,7 @@ bool user_expire_exist(char *username) {
 	char line[200];
 	char id[30];
 
-	elog(LOG,"path is %s", expire_path);
+	elog(DEBUG1,"path is %s", expire_path);
 	fp = fopen(expire_path, "r");
 	if (fp == NULL)
 	{
@@ -296,15 +305,15 @@ bool user_expire_exist(char *username) {
 	strcpy(id, " ");
 	strcat(id, username);
 	strcat(id, " ");
-	elog(LOG,"id is a%sa", id);
+	elog(DEBUG1,"id is a%sa", id);
 
 	while(!feof(fp))
 	{
 		fgets(line, 200, fp);
-		elog(LOG, "1");
+		elog(DEBUG1, "1");
 		if (strstr(line, id))
 		{
-			elog(LOG,"xxxx");
+			elog(DEBUG1,"xxxx");
 			return true;
 		}
 	}
@@ -319,7 +328,7 @@ void user_expire_insert(char *username, long expire_time) {
 	if(fp == NULL) {
 		elog(ERROR, "failed to open login_expire file");
 	}
-	elog(LOG, "%s %ld", username, expire_time);
+	elog(DEBUG1, "%s %ld", username, expire_time);
 	fprintf(fp," %s %ld\n", username, expire_time);
 	fclose(fp);
 }
@@ -348,31 +357,31 @@ user_expire_remove(char * user_name)
 	fseek(fp, 0, SEEK_END);
 	memset(line, 0x00, 200);
 	length = ftell(fp);
-	elog(LOG,"length is:%ld", length);
+	elog(DEBUG1,"length is:%ld", length);
 	buffer = (char*)malloc(sizeof(char)*length);
 	memset(buffer, 0x00, sizeof(char)*length);
 	*buffer = 0;
 	rewind(fp);
 
-	elog(LOG,"buffer is:%s", buffer);
+	elog(DEBUG1,"buffer is:%s", buffer);
 	strcpy(id, " ");
 	strcat(id, user_name);
 	strcat(id, " ");
-	elog(LOG,"id is a%sa", id);
-	elog(LOG,"line is:%s", line);
+	elog(DEBUG1,"id is a%sa", id);
+	elog(DEBUG1,"line is:%s", line);
 	while(!feof(fp))
 	{
 		fgets(line, 200, fp);
-		elog(LOG,"line is:%s", line);
+		elog(DEBUG1,"line is:%s", line);
 		if (strstr(line, id))
 		{
 			continue;
 		}
 		strcat(buffer, line);
-		elog(LOG,"buffer is:%s", buffer);
+		elog(DEBUG1,"buffer is:%s", buffer);
 	}
 	fclose(fp);
-	elog(LOG,"buffer is:%s", buffer);
+	elog(DEBUG1,"buffer is:%s", buffer);
 	fp = fopen(expire_path, "w");
 	fputs(buffer, fp);
 	fclose(fp);
@@ -393,13 +402,13 @@ create_record_file(void)
 	configdir = make_absolute_path(getenv("PGDATA"));
 	full_path = malloc(strlen(configdir) + strlen(LOGIN_REFUSE_FILE) + 2);
 	sprintf(full_path, "%s/%s", configdir, LOGIN_REFUSE_FILE);
-	elog(LOG,"path is %s", full_path);
+	elog(DEBUG1,"path is %s", full_path);
 
 	if((fp = fopen(full_path,"r")) == NULL)
 	{
 		fp = fopen(full_path,"w");
 		fclose(fp);
-		elog(LOG,"file created!!");
+		elog(DEBUG1,"file created!!");
 	}
 	else
 	{
@@ -419,7 +428,7 @@ user_exist(char * user_name)
 	char line[200];
 	char id[30];
 
-	elog(LOG,"path is %s", full_path);
+	elog(DEBUG1,"path is %s", full_path);
 	fp = fopen(full_path, "r");
 	if (fp == NULL)
 	{
@@ -429,14 +438,14 @@ user_exist(char * user_name)
 	strcpy(id, " ");
 	strcat(id, user_name);
 	strcat(id, " ");
-	elog(LOG,"id is a%sa", id);
+	elog(DEBUG1,"id is a%sa", id);
 
 	while(!feof(fp))
 	{
 		fgets(line, 200, fp);
 		if (strstr(line, id))
 		{
-			elog(LOG,"xxxx");
+			elog(DEBUG1,"xxxx");
 			return true;
 		}
 	}
@@ -455,7 +464,7 @@ failed_count(char * user_name)
 	int fail_count;
 	char *ptr;
 
-	elog(LOG,"path is %s", full_path);
+	elog(DEBUG1,"path is %s", full_path);
 	fp = fopen(full_path, "r");
 	if (fp == NULL)
 	{
@@ -465,20 +474,20 @@ failed_count(char * user_name)
 	strcpy(id, " ");
 	strcat(id, user_name);
 	strcat(id, " ");
-	elog(LOG,"id is a%sa", id);
+	elog(DEBUG1,"id is a%sa", id);
 
 	while(!feof(fp))
 	{
 		fgets(line, 200, fp);
 		if (strstr(line, id))
 		{
-			elog(LOG,"failed_count");
+			elog(DEBUG1,"failed_count");
 			//get the failed_count of the line match the user_name
 			ptr = strtok(line," ");
 			ptr = strtok(NULL, " ");
-			elog(LOG,"ptr is $$%s$$",ptr);
+			elog(DEBUG1,"ptr is $$%s$$",ptr);
 			sscanf(ptr,"%d", &fail_count);
-			elog(LOG,"failed_count is %d",fail_count);
+			elog(DEBUG1,"failed_count is %d",fail_count);
 			return fail_count;
 		}
 	}
@@ -497,7 +506,7 @@ failed_time_interval(char * user_name)
 	char id[30];
 	time_t failed_time;
 
-	elog(LOG,"path is %s", full_path);
+	elog(DEBUG1,"path is %s", full_path);
 	fp = fopen(full_path, "r");
 	if (fp == NULL)
 	{
@@ -507,21 +516,21 @@ failed_time_interval(char * user_name)
 	strcpy(id, " ");
 	strcat(id, user_name);
 	strcat(id, " ");
-	elog(LOG,"id is a%sa", id);
+	elog(DEBUG1,"id is a%sa", id);
 
 	while(!feof(fp))
 	{
 		fgets(line, 200, fp);
 		if (strstr(line, id))
 		{
-			elog(LOG,"failed_time_interval");
+			elog(DEBUG1,"failed_time_interval");
 			//get the failed_time of the line match the user_name
 			ptr = strtok(line," ");
 			ptr = strtok(NULL, " ");
 			ptr = strtok(NULL, " ");
-			elog(LOG,"ptr is $$%s$$",ptr);
+			elog(DEBUG1,"ptr is $$%s$$",ptr);
 			sscanf(ptr,"%ld", &failed_time);
-			elog(LOG,"failed_time is %ld",failed_time);
+			elog(DEBUG1,"failed_time is %ld",failed_time);
 
 			return time(NULL) - failed_time;
 		}
@@ -551,31 +560,31 @@ remove_user(char * user_name)
 	fseek(fp, 0, SEEK_END);
 	memset(line, 0x00, 200);
 	length = ftell(fp);
-	elog(LOG,"length is:%ld", length);
+	elog(DEBUG1,"length is:%ld", length);
 	buffer = (char*)malloc(sizeof(char)*length);
 	memset(buffer, 0x00, sizeof(char)*length);
 	*buffer = 0;
 	rewind(fp);
 
-	elog(LOG,"buffer is:%s", buffer);
+	elog(DEBUG1,"buffer is:%s", buffer);
 	strcpy(id, " ");
 	strcat(id, user_name);
 	strcat(id, " ");
-	elog(LOG,"id is a%sa", id);
-	elog(LOG,"line is:%s", line);
+	elog(DEBUG1,"id is a%sa", id);
+	elog(DEBUG1,"line is:%s", line);
 	while(!feof(fp))
 	{
 		fgets(line, 200, fp);
-		elog(LOG,"line is:%s", line);
+		elog(DEBUG1,"line is:%s", line);
 		if (strstr(line, id))
 		{
 			continue;
 		}
 		strcat(buffer, line);
-		elog(LOG,"buffer is:%s", buffer);
+		elog(DEBUG1,"buffer is:%s", buffer);
 	}
 	fclose(fp);
-	elog(LOG,"buffer is:%s", buffer);
+	elog(DEBUG1,"buffer is:%s", buffer);
 	fp = fopen(full_path, "w");
 	fputs(buffer, fp);
 	fclose(fp);
@@ -595,7 +604,7 @@ insert_user(char * user_name, int count, long timestamp)
 	{
 		elog(ERROR,"failed to open file login_refuse");
 	}
-	elog(LOG," %s %d %ld\n", user_name, count, timestamp);
+	elog(DEBUG1," %s %d %ld\n", user_name, count, timestamp);
 	fprintf(fp," %s %d %ld\n", user_name, count, timestamp);
 
 	fclose(fp);

@@ -7,3 +7,8 @@ CREATE FUNCTION login_refuse_set_expire_time(text, bigint)
 RETURNS void
 AS 'MODULE_PATHNAME'
 LANGUAGE C;
+
+CREATE FUNCTION login_refuse_reset_expire_time(text)
+RETURNS void
+AS 'MODULE_PATHNAME'
+LANGUAGE C;
