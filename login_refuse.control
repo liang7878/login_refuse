@@ -1,0 +1,5 @@
+# login_refuse extension
+comment = 'Add login check in postgres'
+default_version = '0.1'
+module_pathname = '$libdir/login_refuse'
+relocatable = true
